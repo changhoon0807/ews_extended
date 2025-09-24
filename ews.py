@@ -1298,7 +1298,7 @@ def plot_pred_decomp(results, impacts, feature_ids, feature_groups, crises=None,
     # 상단: 예측결과 차트
     for i, (model_name, result) in enumerate(results.items()):
         
-        marker = 'o' if model_name == 'ET' or model_name == 'ET(은행)' or model_name == 'ET(비은행)' else None
+        marker = 'o' if model_name == 'ET' or model_name == 'ET(은행)' or model_name == 'ET(비은행)' or model_name == 'ET_baseline' else None
         #marker = None
         x_values = result.loc[shared_index].index
         y_values = result.loc[shared_index]["pred"]
@@ -1324,9 +1324,9 @@ def plot_pred_decomp(results, impacts, feature_ids, feature_groups, crises=None,
         ax1.axhline(perc70, color='green', linestyle='--', lw=2)
 
     # 모델 범례 (왼쪽 상단)
-    model_legend = ax1.legend(loc='upper left', frameon=False, fontsize=18)
+    model_legend = ax1.legend(loc='upper left', frameon=False, fontsize=15)
     
-    # 위험/주의 기준선을 위한 별도 범례 생성 (오른쪽 상단)
+    # 위험/주의 기준선을 위한 별도 범례 생성 (ET 범례 아래)
     threshold_lines = []
     threshold_labels = []
     
@@ -1339,7 +1339,7 @@ def plot_pred_decomp(results, impacts, feature_ids, feature_groups, crises=None,
     
     if threshold_lines:
         threshold_legend = ax1.legend(threshold_lines, threshold_labels, 
-                                    loc='upper right', frameon=False, fontsize=12)
+                                    loc='upper left', bbox_to_anchor=(0.82, 1), frameon=False, fontsize=13)
         # 위험/주의 텍스트를 굵게 설정
         for i, text in enumerate(threshold_legend.get_texts()):
             text.set_weight('bold')
@@ -1413,7 +1413,7 @@ def plot_pred_decomp(results, impacts, feature_ids, feature_groups, crises=None,
     labels = np.array([label for label in palette]).reshape(legend_row, legend_col).T.flatten()
     handles = [plt.Rectangle((0, 0), 1, 1, color=palette[label]) for label in labels]
     ax2.legend(handles, labels, loc='lower center', frameon=False, ncol=legend_col,
-               bbox_to_anchor=(0.5, -0.35), fontsize=11, columnspacing=0.5)
+               bbox_to_anchor=(0.5, -0.39), fontsize=11, columnspacing=0.5)
     
     # 그리드 설정
     ax2.grid(axis="both", linestyle='--', linewidth=0.9, alpha=0.9)
@@ -1499,7 +1499,7 @@ def plot_pred_decomp(results, impacts, feature_ids, feature_groups, crises=None,
     #plt.show()
     
     if is_save_fig:
-        fig.savefig(fig_name, dpi=300, bbox_inches='tight')
+        fig.savefig(fig_name, dpi=300, bbox_inches='tight', transparent=True)
 
 
 def plot_pred_decomp_all(results_dict, impacts_dict, feature_ids, feature_groups, 
@@ -1696,11 +1696,11 @@ def plot_pred_decomp_all(results_dict, impacts_dict, feature_ids, feature_groups
         ax2.grid(axis="both", linestyle='--', linewidth=0.5, alpha=0.7)
 
         # 제목
-        main_title = '금융·외환시장 조기경보지수'
-        update_info = f'(업데이트: {year}.{xticklabels[-1]})'
+        # main_title = '금융·외환시장 조기경보지수'
+        # update_info = f'(업데이트: {year}.{xticklabels[-1]})'
         
-        fig.text(0.5, 1.01, main_title, fontsize=24, ha='center', va='top')
-        fig.text(0.5, 0.96, update_info, fontsize=15, ha='center', va='top', alpha=0.7)
+        # fig.text(0.5, 1.01, main_title, fontsize=24, ha='center', va='top')
+        # fig.text(0.5, 0.96, update_info, fontsize=15, ha='center', va='top', alpha=0.7)
 
     plt.tight_layout()
     
