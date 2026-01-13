@@ -903,7 +903,7 @@ def load_folds(X, y, groups, train_exclusion=None,
     if cv_method == 'sgkf':
         splitter = StratifiedGroupKFold(n_splits=n_splits)
     elif cv_method == 'loeo':
-        # Leave-One-Group-Out 교차검증
+        # Leave-One-Grou-Out 교차검증
         splitter = LeaveOneGroupOut()
     else:
         raise ValueError("cv_method must be 'sgkf' or 'loeo'")
@@ -1298,7 +1298,7 @@ def plot_pred_decomp(results, impacts, feature_ids, feature_groups, crises=None,
     # 상단: 예측결과 차트
     for i, (model_name, result) in enumerate(results.items()):
         
-        marker = 'o' if model_name == 'ET' or model_name == 'ET(은행)' or model_name == 'ET(비은행)' or model_name == 'ET_baseline' else None
+        marker = 'o' if model_name == 'ET' or model_name == 'ET_bank' or model_name == 'ET_nbank' or model_name == 'ET_baseline' else None
         #marker = None
         x_values = result.loc[shared_index].index
         y_values = result.loc[shared_index]["pred"]
@@ -1673,12 +1673,15 @@ def plot_pred_decomp_all(results_dict, impacts_dict, feature_ids, feature_groups
         ax2.set_xticklabels(xticklabels, fontsize=10)
         
         # y축 설정
-        y_top = impacts[impacts >= 0].groupby('period').sum().max()[0]
-        y_bottom = impacts[impacts < 0].groupby('period').sum().min()[0]
+        #y_top = impacts[impacts >= 0].groupby('period').sum().max()[0]
+        #y_bottom = impacts[impacts < 0].groupby('period').sum().min()[0]
         #ax2.set_ylim([max(y_bottom*1.2, -1), min(y_top*1.2, 1)])
-        margin = 0.05
-        ax2.set_ylim(-0.1 - 0.05, 0.1 + 0.05)
-        ax2.set_yticks([-0.1, 0, 0.1])
+        #margin = 0.05
+        #ax2.set_ylim(-0.1 - 0.05, 0.1 + 0.05)
+        
+        ax2.set_ylim(-0.05 - 0.01, 0.05 + 0.01)
+        ax2.set_yticks([-0.05, 0, 0.05])
+        
         ax2.tick_params(axis='y', labelsize=16)
         ax2.tick_params(axis='x', labelsize=16)
         
@@ -1696,11 +1699,11 @@ def plot_pred_decomp_all(results_dict, impacts_dict, feature_ids, feature_groups
         ax2.grid(axis="both", linestyle='--', linewidth=0.5, alpha=0.7)
 
         # 제목
-        # main_title = '금융·외환시장 조기경보지수'
-        # update_info = f'(업데이트: {year}.{xticklabels[-1]})'
+        main_title = '금융·외환시장 실시간 조기경보지수'
+        update_info = f'(업데이트: {year}.{xticklabels[-1]})'
         
-        # fig.text(0.5, 1.01, main_title, fontsize=24, ha='center', va='top')
-        # fig.text(0.5, 0.96, update_info, fontsize=15, ha='center', va='top', alpha=0.7)
+        fig.text(0.5, 1.01, main_title, fontsize=24, ha='center', va='top')
+        fig.text(0.5, 0.96, update_info, fontsize=15, ha='center', va='top', alpha=0.7)
 
     plt.tight_layout()
     
@@ -1914,3 +1917,152 @@ def gen_vintage_combinded(vintage_folder, vintage_files, features):
         print(f"feature 수: {X_vintage_combined.shape[1]}")
         
     return X_vintage_combined if vintage_data_list else None
+
+
+def _to_datetime_index(s: pd.Series) -> pd.Series:
+    s = s.sort_index()
+    if hasattr(s.index, "to_timestamp"):
+        s = s.copy()
+        s.index = s.index.to_timestamp()
+    return s
+
+def _eval_threshold(score: pd.Series, y_true: pd.Series, thr: float) -> dict:
+    y_pred = score >= thr
+    TP = int((y_pred &  y_true).sum())
+    FP = int((y_pred & ~y_true).sum())
+    FN = int((~y_pred &  y_true).sum())
+    TN = int((~y_pred & ~y_true).sum())
+
+    tpr  = TP / (TP + FN) if (TP+FN) else np.nan
+    fpr  = FP / (FP + TN) if (FP+TN) else np.nan
+    prec = TP / (TP + FP) if (TP+FP) else np.nan
+    f1   = (2*prec*tpr/(prec+tpr)) if (prec and tpr and (prec+tpr)) else np.nan
+    nsr  = (fpr/tpr) if (tpr and not np.isnan(tpr) and tpr > 0) else np.nan
+
+    return dict(TP=TP, FP=FP, FN=FN, TN=TN, TPR=tpr, FPR=fpr, Precision=prec, F1=f1, NSR=nsr)
+
+def _make_grid(score: pd.Series, n_grid: int = 400) -> np.ndarray:
+    # 후보 임계치: score 분위수 그리드(값 중복 제거)
+    q = np.linspace(0.01, 0.995, n_grid)
+    grid = np.unique(np.quantile(score.values, q))
+    return grid
+
+def thresholds_A_constraint_opt(
+    score: pd.Series,
+    y_true: pd.Series,
+    start_date: str = "2002-01-01",
+    tpr_min_warn: float = 0.95,
+    tpr_min_alert: float = 0.70,
+    n_grid: int = 400,
+) -> dict:
+    score = _to_datetime_index(score)
+    y_true = _to_datetime_index(y_true.astype("boolean")).reindex(score.index)
+
+    score = score.loc[start_date:]
+    y_true = y_true.loc[start_date:]
+
+    mask = score.notna() & y_true.notna()
+    score = score[mask]
+    y_true = y_true[mask].astype(bool)
+
+    grid = _make_grid(score, n_grid=n_grid)
+
+    rows = []
+    for thr in grid:
+        m = _eval_threshold(score, y_true, float(thr))
+        rows.append([float(thr), m["TPR"], m["FPR"], m["Precision"], m["F1"], m["NSR"],
+                     m["TP"], m["FP"], m["FN"], m["TN"]])
+    res = pd.DataFrame(rows, columns=[
+        "thr","TPR","FPR","Precision","F1","NSR","TP","FP","FN","TN"
+    ])
+
+    # ---- Warn 선택: TPR 제약 + NSR 최소(그 다음 FPR 최소, thr 낮은 쪽 선호) ----
+    warn_cand = res[res["TPR"] >= tpr_min_warn].copy()
+    if len(warn_cand) == 0:
+        # 제약 만족이 불가능하면: TPR 최대(그 다음 NSR 최소)로 fallback
+        warn = (res.sort_values(["TPR","NSR","FPR","thr"], ascending=[False, True, True, True])
+                  .iloc[0])
+        warn_note = f"WARNING: TPR≥{tpr_min_warn} 후보가 없어 fallback(최대 TPR 우선) 사용"
+    else:
+        warn = (warn_cand.sort_values(["NSR","FPR","thr"], ascending=[True, True, True])
+                        .iloc[0])
+        warn_note = ""
+
+    warn_thr = float(warn["thr"])
+
+    # ---- Alert 선택: Precision 제약 + F1 최대(그 다음 Precision, thr 큰 쪽 선호), thr>warn 강제 ----
+    alert_cand = res[(res["Precision"] >= tpr_min_alert) & (res["thr"] > warn_thr)].copy()
+    if len(alert_cand) == 0:
+        # 제약 만족이 불가능하면: warn_thr 위에서 F1 최대 fallback
+        alert_cand2 = res[res["thr"] > warn_thr].copy()
+        if len(alert_cand2) == 0:
+            # 이론상 거의 없지만 안전장치
+            alert = res.sort_values(["thr"], ascending=[False]).iloc[0]
+            alert_note = f"ALERT: thr>warn_thr 후보가 없어 전체 최대 thr fallback"
+        else:
+            alert = (alert_cand2.sort_values(["F1","Precision","thr"], ascending=[False, False, False])
+                               .iloc[0])
+            alert_note = f"ALERT: Precision≥{tpr_min_alert} 후보가 없어 fallback(F1 최대) 사용"
+    else:
+        alert = (alert_cand.sort_values(["F1","Precision","thr"], ascending=[False, False, False])
+                          .iloc[0])
+        alert_note = ""
+
+    alert_thr = float(alert["thr"])
+
+    out = {
+        "method": "A_constraint_opt",
+        "start_date": start_date,
+        "n_total": int(len(score)),
+        "n_crisis": int(y_true.sum()),
+        "n_tranquil": int((~y_true).sum()),
+        "tpr_min_warn": tpr_min_warn,
+        "tpr_min_alert": tpr_min_alert,
+        "warn_thr": warn_thr,
+        "alert_thr": alert_thr,
+        "warn_note": warn_note,
+        "alert_note": alert_note,
+    }
+    # 성능 저장
+    out.update({f"warn_{k}": warn[k] for k in ["TPR","FPR","Precision","F1","NSR","TP","FP","FN","TN"]})
+    out.update({f"alert_{k}": alert[k] for k in ["TPR","FPR","Precision","F1","NSR","TP","FP","FN","TN"]})
+    return out
+
+def thresholds_B_tranquil_quantile(
+    score: pd.Series,
+    y_true: pd.Series,
+    start_date: str = "2002-01-01",
+    warn_fpr_budget: float = 0.05,
+    alert_fpr_budget: float = 0.01,
+) -> dict:
+    score = _to_datetime_index(score)
+    y_true = _to_datetime_index(y_true.astype("boolean")).reindex(score.index)
+
+    score = score.loc[start_date:]
+    y_true = y_true.loc[start_date:]
+
+    mask = score.notna() & y_true.notna()
+    score = score[mask]
+    y_true = y_true[mask].astype(bool)
+
+    tranquil = score[~y_true]
+    warn_thr  = float(tranquil.quantile(1 - warn_fpr_budget))
+    alert_thr = float(tranquil.quantile(1 - alert_fpr_budget))
+
+    warn_m  = _eval_threshold(score, y_true, warn_thr)
+    alert_m = _eval_threshold(score, y_true, alert_thr)
+
+    out = {
+        "method": "B_tranquil_quantile",
+        "start_date": start_date,
+        "n_total": int(len(score)),
+        "n_crisis": int(y_true.sum()),
+        "n_tranquil": int((~y_true).sum()),
+        "warn_fpr_budget": warn_fpr_budget,
+        "alert_fpr_budget": alert_fpr_budget,
+        "warn_thr": warn_thr,
+        "alert_thr": alert_thr,
+    }
+    out.update({f"warn_{k}": warn_m[k] for k in warn_m})
+    out.update({f"alert_{k}": alert_m[k] for k in alert_m})
+    return out
